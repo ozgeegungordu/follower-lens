@@ -41,3 +41,19 @@ export interface LiveScanResult {
   users: LiveInstagramUser[];
   diagnostics: LiveScanDiagnostics;
 }
+
+export interface LiveFollowersScanDiagnostics {
+  rawRecords: number;
+  validRecords: number;
+  uniqueUsers: number;
+  duplicateRecords: number;
+  invalidRecords: number;
+  pagesFetched: number;
+}
+
+export interface LiveFollowersScanResult {
+  viewerId: string;
+  followerCount: number;
+  users: LiveInstagramUser[];
+  diagnostics: LiveFollowersScanDiagnostics;
+}
