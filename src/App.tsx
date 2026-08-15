@@ -21,6 +21,11 @@ import {
   type LiveRelationshipAnalysis,
 } from "./live/relationshipAnalysis";
 
+import {
+  processFollowerHistory,
+  type FollowerHistoryUpdate,
+} from "./history/followerHistory";
+
 import type {
   InstagramPerson,
   RelationshipTab,
@@ -49,7 +54,8 @@ type FileKind =
 type LiveTab =
   | "not-following-back"
   | "mutual"
-  | "fans";
+  | "fans"
+  | "recent-unfollowers";
 
 const tabConfig: Array<{
   id: RelationshipTab;
@@ -217,6 +223,14 @@ function App() {
       null,
     );
 
+  const [
+    followerHistory,
+    setFollowerHistory,
+  ] =
+    useState<FollowerHistoryUpdate | null>(
+      null,
+    );
+
   const followersInput =
     useRef<HTMLInputElement>(null);
 
@@ -303,6 +317,18 @@ function App() {
     liveAnalysis?.fans ??
     [];
 
+  const liveRecentUnfollowers =
+    useMemo<LiveInstagramUser[]>(
+      () =>
+        followerHistory?.recent.map(
+          ({ user }) => ({
+            ...user,
+            followsViewer: null,
+          }),
+        ) ?? [],
+      [followerHistory],
+    );
+
   const livePeople =
     useMemo(() => {
       const source =
@@ -311,7 +337,9 @@ function App() {
           ? liveNotFollowingBack
           : liveTab === "mutual"
             ? liveMutual
-            : liveFans;
+            : liveTab === "fans"
+              ? liveFans
+              : liveRecentUnfollowers;
 
       const needle =
         query
@@ -336,6 +364,7 @@ function App() {
       liveFans,
       liveMutual,
       liveNotFollowingBack,
+      liveRecentUnfollowers,
       liveTab,
       query,
     ]);
@@ -348,7 +377,12 @@ function App() {
     setLiveMessage("");
 
     setLiveResult(null);
+
     setLiveFollowersResult(
+      null,
+    );
+
+    setFollowerHistory(
       null,
     );
 
@@ -468,6 +502,10 @@ function App() {
       null,
     );
 
+    setFollowerHistory(
+      null,
+    );
+
     setQuery("");
 
     setLiveTab(
@@ -481,6 +519,12 @@ function App() {
       const followersResult =
         await scanInstagramFollowers();
 
+      const historyResult =
+        await processFollowerHistory(
+          result.viewerId,
+          followersResult.users,
+        );
+
       console.log(
         "[Follower Lens] following diagnostics:",
         result.diagnostics,
@@ -491,6 +535,11 @@ function App() {
         followersResult.diagnostics,
       );
 
+      console.log(
+        "[Follower Lens] follower history:",
+        historyResult,
+      );
+
       setLiveResult(
         result,
       );
@@ -499,13 +548,25 @@ function App() {
         followersResult,
       );
 
+      setFollowerHistory(
+        historyResult,
+      );
+
       setLiveStatus(
         "ready",
       );
 
-      setLiveMessage(
-        `Analiz tamamlandı • ${result.followingCount} takip edilen • ${followersResult.followerCount} takipçi`,
-      );
+      if (
+        historyResult.baselineCreated
+      ) {
+        setLiveMessage(
+          `Analiz tamamlandı • ${result.followingCount} takip edilen • ${followersResult.followerCount} takipçi • Son bırakanlar için ilk kayıt oluşturuldu`,
+        );
+      } else {
+        setLiveMessage(
+          `Analiz tamamlandı • ${result.followingCount} takip edilen • ${followersResult.followerCount} takipçi`,
+        );
+      }
     } catch (err) {
       console.error(
         "[Follower Lens] Live scan failed:",
@@ -595,6 +656,10 @@ function App() {
       null,
     );
 
+    setFollowerHistory(
+      null,
+    );
+
     setLiveStatus(
       "idle",
     );
@@ -657,6 +722,9 @@ function App() {
         <LiveDashboard
           analysis={
             liveAnalysis
+          }
+          history={
+            followerHistory
           }
           people={
             livePeople
@@ -1145,6 +1213,7 @@ function App() {
 
 function LiveDashboard({
   analysis,
+  history,
   people,
   liveTab,
   query,
@@ -1154,6 +1223,7 @@ function LiveDashboard({
   onReset,
 }: {
   analysis: LiveRelationshipAnalysis;
+  history: FollowerHistoryUpdate | null;
   people: LiveInstagramUser[];
   liveTab: LiveTab;
   query: string;
@@ -1229,6 +1299,28 @@ function LiveDashboard({
           </>
         )}
       </div>
+
+      {history?.baselineCreated && (
+        <div className="live-warning">
+          Son bırakanları takip edebilmek için ilk takipçi kaydı oluşturuldu.
+          Sonraki analizlerde değişiklikler karşılaştırılacak.
+        </div>
+      )}
+
+      {!history?.baselineCreated &&
+        history &&
+        history.pending.length >
+          0 && (
+          <div className="live-warning">
+            {
+              history.pending
+                .length
+            }{" "}
+            hesap takipçi listesinde görünmüyor.
+            Yanlış sonuçları önlemek için bir sonraki analizde tekrar kontrol
+            edilecek.
+          </div>
+        )}
 
       <nav
         className="tabs live-tabs"
@@ -1314,6 +1406,32 @@ function LiveDashboard({
             }
           </b>
         </button>
+
+        <button
+          type="button"
+          className={
+            liveTab ===
+            "recent-unfollowers"
+              ? "tab active"
+              : "tab"
+          }
+          onClick={() =>
+            onTabChange(
+              "recent-unfollowers",
+            )
+          }
+        >
+          <span>
+            Son Bırakanlar
+          </span>
+
+          <b>
+            {
+              history?.recent
+                .length ?? 0
+            }
+          </b>
+        </button>
       </nav>
 
       <div className="toolbar">
@@ -1382,6 +1500,14 @@ function LiveDashboard({
               />
             ),
           )
+        ) : liveTab ===
+          "recent-unfollowers" ? (
+          <RecentEmptyState
+            baselineCreated={
+              history?.baselineCreated ??
+              false
+            }
+          />
         ) : (
           <EmptyState />
         )}
@@ -1541,7 +1667,10 @@ function LivePersonRow({
               : liveTab ===
                   "mutual"
                 ? "Karşılıklı takip"
-                : "Seni takip ediyor")}
+                : liveTab ===
+                    "fans"
+                  ? "Seni takip ediyor"
+                  : "Yakın zamanda takipten çıktı")}
         </span>
       </div>
 
@@ -1630,13 +1759,37 @@ function EmptyState() {
   );
 }
 
+function RecentEmptyState({
+  baselineCreated,
+}: {
+  baselineCreated: boolean;
+}) {
+  return (
+    <div className="empty-state">
+      <Icon name="sparkle" />
+
+      <strong>
+        {baselineCreated
+          ? "İlk kayıt hazır."
+          : "Son bırakan bulunmadı."}
+      </strong>
+
+      <span>
+        {baselineCreated
+          ? "Bir sonraki analizden itibaren takipçi değişiklikleri karşılaştırılacak."
+          : "Doğrulanmış yakın tarihli takipten çıkan hesap yok."}
+      </span>
+    </div>
+  );
+}
+
 function Footer() {
   return (
     <footer className="footer">
       <span className="status-dot" />
 
       <span>
-        Analiz sadece bu oturumda bellekte tutuluyor.
+        Analiz ve takip geçmişi yalnızca cihazında tutuluyor.
       </span>
     </footer>
   );
