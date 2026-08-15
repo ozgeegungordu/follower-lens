@@ -1,4 +1,9 @@
-import { useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   analyzeRelationships,
   parseInstagramFile,
@@ -909,6 +914,94 @@ function LiveDashboard({
   );
 }
 
+function normalizeProfilePicUrl(url: string) {
+  return url
+    .trim()
+    .replace(/&amp;/g, "&");
+}
+
+function AvatarImage({
+  url,
+  username,
+}: {
+  url: string;
+  username: string;
+}) {
+  const [blobUrl, setBlobUrl] = useState("");
+
+  useEffect(() => {
+    if (!url) {
+      setBlobUrl("");
+      return;
+    }
+
+    let cancelled = false;
+    let objectUrl = "";
+
+    async function loadAvatar() {
+      try {
+        const cleanUrl = url
+          .trim()
+          .replace(/&amp;/g, "&");
+
+        const response = await fetch(cleanUrl, {
+          credentials: "omit",
+          cache: "force-cache",
+        });
+
+        if (!response.ok) {
+          throw new Error(
+            `Avatar HTTP ${response.status}`,
+          );
+        }
+
+        const blob = await response.blob();
+
+        if (cancelled) {
+          return;
+        }
+
+        objectUrl =
+          URL.createObjectURL(blob);
+
+        setBlobUrl(objectUrl);
+      } catch (error) {
+        console.warn(
+          "[Follower Lens] Avatar fetch failed:",
+          username,
+          error,
+        );
+
+        if (!cancelled) {
+          setBlobUrl("");
+        }
+      }
+    }
+
+    loadAvatar();
+
+    return () => {
+      cancelled = true;
+
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [url, username]);
+
+  if (!blobUrl) {
+    return null;
+  }
+
+  return (
+    <img
+      src={blobUrl}
+      alt=""
+      loading="lazy"
+    />
+  );
+}
+
 function LivePersonRow({
   person,
   index,
@@ -928,15 +1021,9 @@ function LivePersonRow({
         </span>
 
         {person.profilePicUrl && (
-          <img
-            src={person.profilePicUrl}
-            alt=""
-            loading="lazy"
-            referrerPolicy="no-referrer"
-            onError={(event) => {
-              event.currentTarget.style.display =
-                "none";
-            }}
+          <AvatarImage
+            url={person.profilePicUrl}
+            username={person.username}
           />
         )}
       </div>
