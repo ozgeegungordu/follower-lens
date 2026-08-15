@@ -4,14 +4,30 @@ import {
   useRef,
   useState,
 } from "react";
+
 import {
   analyzeRelationships,
   parseInstagramFile,
 } from "./lib/instagramExport";
+
 import { downloadUsernames } from "./lib/export";
+
 import { scanInstagramFollowing } from "./live/instagramScanner";
-import type { InstagramPerson, RelationshipTab } from "./types";
+
+import { scanInstagramFollowers } from "./live/instagramFollowersScanner";
+
+import {
+  analyzeLiveRelationships,
+  type LiveRelationshipAnalysis,
+} from "./live/relationshipAnalysis";
+
 import type {
+  InstagramPerson,
+  RelationshipTab,
+} from "./types";
+
+import type {
+  LiveFollowersScanResult,
   LiveInstagramUser,
   LiveScanResult,
 } from "./live/instagramTypes";
@@ -26,8 +42,14 @@ type LiveStatus =
   | "wrong-tab"
   | "error";
 
-type FileKind = "followers" | "following";
-type LiveTab = "not-following-back" | "mutual";
+type FileKind =
+  | "followers"
+  | "following";
+
+type LiveTab =
+  | "not-following-back"
+  | "mutual"
+  | "fans";
 
 const tabConfig: Array<{
   id: RelationshipTab;
@@ -72,7 +94,11 @@ function Icon({
   if (name === "search") {
     return (
       <svg {...common}>
-        <circle cx="11" cy="11" r="7" />
+        <circle
+          cx="11"
+          cy="11"
+          r="7"
+        />
         <path d="m20 20-3.2-3.2" />
       </svg>
     );
@@ -124,158 +150,288 @@ function Icon({
 }
 
 function App() {
-  const [followers, setFollowers] = useState<InstagramPerson[]>([]);
-  const [following, setFollowing] = useState<InstagramPerson[]>([]);
-  const [followersName, setFollowersName] = useState("");
-  const [followingName, setFollowingName] = useState("");
+  const [followers, setFollowers] =
+    useState<InstagramPerson[]>([]);
+
+  const [following, setFollowing] =
+    useState<InstagramPerson[]>([]);
+
+  const [
+    followersName,
+    setFollowersName,
+  ] = useState("");
+
+  const [
+    followingName,
+    setFollowingName,
+  ] = useState("");
 
   const [tab, setTab] =
-    useState<RelationshipTab>("not-following-back");
+    useState<RelationshipTab>(
+      "not-following-back",
+    );
 
   const [liveTab, setLiveTab] =
-    useState<LiveTab>("not-following-back");
+    useState<LiveTab>(
+      "not-following-back",
+    );
 
-  const [query, setQuery] = useState("");
-  const [error, setError] = useState("");
+  const [query, setQuery] =
+    useState("");
 
-  const [loadingKind, setLoadingKind] =
-    useState<FileKind | null>(null);
+  const [error, setError] =
+    useState("");
 
-  const [liveStatus, setLiveStatus] =
-    useState<LiveStatus>("idle");
+  const [
+    loadingKind,
+    setLoadingKind,
+  ] = useState<FileKind | null>(
+    null,
+  );
 
-  const [liveMessage, setLiveMessage] = useState("");
+  const [
+    liveStatus,
+    setLiveStatus,
+  ] = useState<LiveStatus>(
+    "idle",
+  );
 
-  const [liveResult, setLiveResult] =
-    useState<LiveScanResult | null>(null);
+  const [
+    liveMessage,
+    setLiveMessage,
+  ] = useState("");
 
-  const followersInput = useRef<HTMLInputElement>(null);
-  const followingInput = useRef<HTMLInputElement>(null);
+  const [
+    liveResult,
+    setLiveResult,
+  ] =
+    useState<LiveScanResult | null>(
+      null,
+    );
+
+  const [
+    liveFollowersResult,
+    setLiveFollowersResult,
+  ] =
+    useState<LiveFollowersScanResult | null>(
+      null,
+    );
+
+  const followersInput =
+    useRef<HTMLInputElement>(null);
+
+  const followingInput =
+    useRef<HTMLInputElement>(null);
 
   const analysis = useMemo(
-    () => analyzeRelationships(followers, following),
-    [followers, following],
+    () =>
+      analyzeRelationships(
+        followers,
+        following,
+      ),
+    [
+      followers,
+      following,
+    ],
   );
 
   const fileReady =
-    followers.length > 0 && following.length > 0;
+    followers.length > 0 &&
+    following.length > 0;
 
-  const activePeople = useMemo(() => {
-    const source =
-      tab === "not-following-back"
-        ? analysis.notFollowingBack
-        : tab === "mutual"
-          ? analysis.mutual
-          : analysis.fans;
+  const liveAnalysis =
+    useMemo<LiveRelationshipAnalysis | null>(
+      () => {
+        if (
+          !liveResult ||
+          !liveFollowersResult
+        ) {
+          return null;
+        }
 
-    const needle = query.trim().toLowerCase();
-
-    if (!needle) {
-      return source;
-    }
-
-    return source.filter((person) =>
-      person.username.toLowerCase().includes(needle),
+        return analyzeLiveRelationships(
+          liveResult,
+          liveFollowersResult,
+        );
+      },
+      [
+        liveResult,
+        liveFollowersResult,
+      ],
     );
-  }, [analysis, query, tab]);
 
-  const liveNotFollowingBack = useMemo(
-    () =>
-      liveResult?.users.filter(
-        (user) => user.followsViewer === false,
-      ) ?? [],
-    [liveResult],
-  );
+  const activePeople =
+    useMemo(() => {
+      const source =
+        tab ===
+        "not-following-back"
+          ? analysis.notFollowingBack
+          : tab === "mutual"
+            ? analysis.mutual
+            : analysis.fans;
 
-  const liveMutual = useMemo(
-    () =>
-      liveResult?.users.filter(
-        (user) => user.followsViewer === true,
-      ) ?? [],
-    [liveResult],
-  );
+      const needle =
+        query
+          .trim()
+          .toLowerCase();
 
-  const livePeople = useMemo(() => {
-    const source =
-      liveTab === "not-following-back"
-        ? liveNotFollowingBack
-        : liveMutual;
+      if (!needle) {
+        return source;
+      }
 
-    const needle = query.trim().toLowerCase();
+      return source.filter(
+        (person) =>
+          person.username
+            .toLowerCase()
+            .includes(needle),
+      );
+    }, [
+      analysis,
+      query,
+      tab,
+    ]);
 
-    if (!needle) {
-      return source;
-    }
+  const liveNotFollowingBack =
+    liveAnalysis?.notFollowingBack ??
+    [];
 
-    return source.filter((person) => {
-      const text =
-        `${person.username} ${person.fullName}`.toLowerCase();
+  const liveMutual =
+    liveAnalysis?.mutual ??
+    [];
 
-      return text.includes(needle);
-    });
-  }, [
-    liveTab,
-    liveMutual,
-    liveNotFollowingBack,
-    query,
-  ]);
+  const liveFans =
+    liveAnalysis?.fans ??
+    [];
+
+  const livePeople =
+    useMemo(() => {
+      const source =
+        liveTab ===
+        "not-following-back"
+          ? liveNotFollowingBack
+          : liveTab === "mutual"
+            ? liveMutual
+            : liveFans;
+
+      const needle =
+        query
+          .trim()
+          .toLowerCase();
+
+      if (!needle) {
+        return source;
+      }
+
+      return source.filter(
+        (person) => {
+          const text =
+            `${person.username} ${person.fullName}`.toLowerCase();
+
+          return text.includes(
+            needle,
+          );
+        },
+      );
+    }, [
+      liveFans,
+      liveMutual,
+      liveNotFollowingBack,
+      liveTab,
+      query,
+    ]);
 
   async function checkInstagramConnection() {
-    setLiveStatus("checking");
+    setLiveStatus(
+      "checking",
+    );
+
     setLiveMessage("");
+
     setLiveResult(null);
+    setLiveFollowersResult(
+      null,
+    );
 
     try {
       if (
-        typeof chrome === "undefined" ||
+        typeof chrome ===
+          "undefined" ||
         !chrome.tabs ||
         !chrome.scripting
       ) {
-        setLiveStatus("error");
+        setLiveStatus(
+          "error",
+        );
+
         setLiveMessage(
           "Live Mode localhost'ta çalışmaz. Follower Lens'i Chrome uzantısından aç.",
         );
+
         return;
       }
 
-      const [activeTab] = await chrome.tabs.query({
-        active: true,
-        currentWindow: true,
-      });
+      const [activeTab] =
+        await chrome.tabs.query({
+          active: true,
+          currentWindow: true,
+        });
 
       if (!activeTab?.id) {
-        throw new Error("Aktif sekme bulunamadı.");
+        throw new Error(
+          "Aktif sekme bulunamadı.",
+        );
       }
 
       const [injection] =
-        await chrome.scripting.executeScript({
-          target: {
-            tabId: activeTab.id,
-          },
-          func: () => {
-            return {
-              hostname: window.location.hostname,
-              href: window.location.href,
-              title: document.title,
-            };
-          },
-        });
+        await chrome.scripting.executeScript(
+          {
+            target: {
+              tabId:
+                activeTab.id,
+            },
 
-      const page = injection?.result;
+            func: () => {
+              return {
+                hostname:
+                  window.location
+                    .hostname,
+
+                href:
+                  window.location
+                    .href,
+
+                title:
+                  document.title,
+              };
+            },
+          },
+        );
+
+      const page =
+        injection?.result;
 
       const isInstagram =
-        page?.hostname === "instagram.com" ||
-        page?.hostname === "www.instagram.com";
+        page?.hostname ===
+          "instagram.com" ||
+        page?.hostname ===
+          "www.instagram.com";
 
       if (!isInstagram) {
-        setLiveStatus("wrong-tab");
+        setLiveStatus(
+          "wrong-tab",
+        );
+
         setLiveMessage(
           "Instagram sekmesi açık değil. instagram.com'u açıp Follower Lens'i tekrar çalıştır.",
         );
+
         return;
       }
 
-      setLiveStatus("ready");
+      setLiveStatus(
+        "ready",
+      );
+
       setLiveMessage(
         `Instagram bağlantısı hazır • ${page.hostname}`,
       );
@@ -285,7 +441,9 @@ function App() {
         err,
       );
 
-      setLiveStatus("error");
+      setLiveStatus(
+        "error",
+      );
 
       setLiveMessage(
         err instanceof Error
@@ -296,47 +454,67 @@ function App() {
   }
 
   async function handleLiveScan() {
-    setLiveStatus("scanning");
-    setLiveMessage(
-      "Takip ettiklerin taranıyor. Bu işlem hesap büyüklüğüne göre biraz sürebilir.",
+    setLiveStatus(
+      "scanning",
     );
+
+    setLiveMessage(
+      "Takip ettiklerin ve takipçilerin taranıyor. Bu işlem biraz sürebilir.",
+    );
+
     setLiveResult(null);
+
+    setLiveFollowersResult(
+      null,
+    );
+
     setQuery("");
-    setLiveTab("not-following-back");
+
+    setLiveTab(
+      "not-following-back",
+    );
 
     try {
       const result =
         await scanInstagramFollowing();
 
-      setLiveResult(result);
+      const followersResult =
+        await scanInstagramFollowers();
 
       console.log(
-        "[Follower Lens] diagnostics:",
+        "[Follower Lens] following diagnostics:",
         result.diagnostics,
       );
 
-      setLiveStatus("ready");
+      console.log(
+        "[Follower Lens] followers diagnostics:",
+        followersResult.diagnostics,
+      );
 
-      if (result.diagnostics.isComplete) {
-        setLiveMessage(
-          `Tarama tamamlandı • ${result.followingCount} hesap incelendi`,
-        );
-      } else {
-        setLiveMessage(
-          `Instagram ${
-            result.diagnostics.reportedCount ?? "?"
-          } hesap bildiriyor • ${
-            result.followingCount
-          } erişilebilir hesap analiz edildi`,
-        );
-      }
+      setLiveResult(
+        result,
+      );
+
+      setLiveFollowersResult(
+        followersResult,
+      );
+
+      setLiveStatus(
+        "ready",
+      );
+
+      setLiveMessage(
+        `Analiz tamamlandı • ${result.followingCount} takip edilen • ${followersResult.followerCount} takipçi`,
+      );
     } catch (err) {
       console.error(
         "[Follower Lens] Live scan failed:",
         err,
       );
 
-      setLiveStatus("error");
+      setLiveStatus(
+        "error",
+      );
 
       setLiveMessage(
         err instanceof Error
@@ -355,18 +533,36 @@ function App() {
     }
 
     setError("");
-    setLoadingKind(kind);
+
+    setLoadingKind(
+      kind,
+    );
 
     try {
       const people =
-        await parseInstagramFile(file);
+        await parseInstagramFile(
+          file,
+        );
 
-      if (kind === "followers") {
-        setFollowers(people);
-        setFollowersName(file.name);
+      if (
+        kind ===
+        "followers"
+      ) {
+        setFollowers(
+          people,
+        );
+
+        setFollowersName(
+          file.name,
+        );
       } else {
-        setFollowing(people);
-        setFollowingName(file.name);
+        setFollowing(
+          people,
+        );
+
+        setFollowingName(
+          file.name,
+        );
       }
     } catch (err) {
       setError(
@@ -375,32 +571,56 @@ function App() {
           : "Dosya okunamadı.",
       );
     } finally {
-      setLoadingKind(null);
+      setLoadingKind(
+        null,
+      );
     }
   }
 
   function clearFileAnalysis() {
     setFollowers([]);
     setFollowing([]);
+
     setFollowersName("");
     setFollowingName("");
+
     setQuery("");
     setError("");
   }
 
   function clearLiveAnalysis() {
     setLiveResult(null);
-    setLiveStatus("idle");
+
+    setLiveFollowersResult(
+      null,
+    );
+
+    setLiveStatus(
+      "idle",
+    );
+
     setLiveMessage("");
-    setLiveTab("not-following-back");
+
+    setLiveTab(
+      "not-following-back",
+    );
+
     setQuery("");
   }
 
   const counts = {
     "not-following-back":
-      analysis.notFollowingBack.length,
-    mutual: analysis.mutual.length,
-    fans: analysis.fans.length,
+      analysis
+        .notFollowingBack
+        .length,
+
+    mutual:
+      analysis.mutual
+        .length,
+
+    fans:
+      analysis.fans
+        .length,
   };
 
   return (
@@ -415,7 +635,10 @@ function App() {
           </div>
 
           <div>
-            <strong>Follower Lens</strong>
+            <strong>
+              Follower Lens
+            </strong>
+
             <small>
               Private relationship analyzer
             </small>
@@ -424,35 +647,62 @@ function App() {
 
         <div className="privacy-pill">
           <Icon name="shield" />
-          <span>Local only</span>
+          <span>
+            Local only
+          </span>
         </div>
       </header>
 
-      {liveResult ? (
+      {liveAnalysis ? (
         <LiveDashboard
-          result={liveResult}
-          people={livePeople}
-          liveTab={liveTab}
-          query={query}
-          onTabChange={(nextTab) => {
-            setLiveTab(nextTab);
+          analysis={
+            liveAnalysis
+          }
+          people={
+            livePeople
+          }
+          liveTab={
+            liveTab
+          }
+          query={
+            query
+          }
+          onTabChange={(
+            nextTab,
+          ) => {
+            setLiveTab(
+              nextTab,
+            );
+
             setQuery("");
           }}
-          onQueryChange={setQuery}
-          onClearQuery={() => setQuery("")}
-          onReset={clearLiveAnalysis}
+          onQueryChange={
+            setQuery
+          }
+          onClearQuery={() =>
+            setQuery("")
+          }
+          onReset={
+            clearLiveAnalysis
+          }
         />
       ) : !fileReady ? (
         <section className="onboarding">
           <div className="hero">
             <div className="eyebrow">
               <Icon name="sparkle" />
-              <span>PRIVATE • LOCAL • FAST</span>
+
+              <span>
+                PRIVATE • LOCAL • FAST
+              </span>
             </div>
 
             <h1>
               Takip ilişkilerini
-              <span> temizce gör.</span>
+              <span>
+                {" "}
+                temizce gör.
+              </span>
             </h1>
 
             <p>
@@ -466,18 +716,22 @@ function App() {
           <button
             type="button"
             className={`upload-card ${
-              liveStatus === "ready"
+              liveStatus ===
+              "ready"
                 ? "loaded"
                 : ""
             }`}
             onClick={
-              liveStatus === "ready"
+              liveStatus ===
+              "ready"
                 ? handleLiveScan
                 : checkInstagramConnection
             }
             disabled={
-              liveStatus === "checking" ||
-              liveStatus === "scanning"
+              liveStatus ===
+                "checking" ||
+              liveStatus ===
+                "scanning"
             }
           >
             <div className="upload-icon">
@@ -486,38 +740,51 @@ function App() {
 
             <div className="upload-copy">
               <strong>
-                {liveStatus === "checking"
+                {liveStatus ===
+                "checking"
                   ? "Instagram kontrol ediliyor..."
-                  : liveStatus === "scanning"
+                  : liveStatus ===
+                      "scanning"
                     ? "Hesabın taranıyor..."
-                    : liveStatus === "ready"
+                    : liveStatus ===
+                        "ready"
                       ? "Hesabımı analiz et"
                       : "Instagram'ı bağla"}
               </strong>
 
               <span>
-                {liveStatus === "scanning"
-                  ? "Takip ettiklerin kontrol ediliyor..."
-                  : liveStatus === "ready"
+                {liveStatus ===
+                "scanning"
+                  ? "Takip ilişkileri kontrol ediliyor..."
+                  : liveStatus ===
+                      "ready"
                     ? "Live scanner'ı başlat"
                     : "instagram.com açıkken buraya tıkla"}
               </span>
             </div>
 
             <div className="upload-meta">
-              {liveStatus === "ready" ? (
+              {liveStatus ===
+              "ready" ? (
                 <b>✓</b>
-              ) : liveStatus === "scanning" ? (
-                <span>...</span>
+              ) : liveStatus ===
+                "scanning" ? (
+                <span>
+                  ...
+                </span>
               ) : (
-                <span>LIVE</span>
+                <span>
+                  LIVE
+                </span>
               )}
             </div>
           </button>
 
           {liveMessage &&
-            (liveStatus === "ready" ||
-              liveStatus === "scanning") && (
+            (liveStatus ===
+              "ready" ||
+              liveStatus ===
+                "scanning") && (
               <div className="privacy-card">
                 <div className="privacy-icon">
                   <Icon name="shield" />
@@ -525,19 +792,24 @@ function App() {
 
                 <div>
                   <strong>
-                    {liveStatus === "scanning"
+                    {liveStatus ===
+                    "scanning"
                       ? "Instagram taranıyor."
                       : "Instagram bağlantısı kuruldu."}
                   </strong>
 
-                  <p>{liveMessage}</p>
+                  <p>
+                    {liveMessage}
+                  </p>
                 </div>
               </div>
             )}
 
           {liveMessage &&
-            (liveStatus === "wrong-tab" ||
-              liveStatus === "error") && (
+            (liveStatus ===
+              "wrong-tab" ||
+              liveStatus ===
+                "error") && (
               <div className="error-banner">
                 {liveMessage}
               </div>
@@ -545,13 +817,26 @@ function App() {
 
           <div
             style={{
-              marginTop: "18px",
-              marginBottom: "10px",
-              fontSize: "10px",
-              color: "#8f90a0",
-              textTransform: "uppercase",
-              letterSpacing: "0.08em",
-              fontWeight: 700,
+              marginTop:
+                "18px",
+
+              marginBottom:
+                "10px",
+
+              fontSize:
+                "10px",
+
+              color:
+                "#8f90a0",
+
+              textTransform:
+                "uppercase",
+
+              letterSpacing:
+                "0.08em",
+
+              fontWeight:
+                700,
             }}
           >
             Alternatif • File Mode
@@ -561,58 +846,88 @@ function App() {
             <UploadCard
               title="Takipçiler"
               subtitle="followers JSON dosyası"
-              filename={followersName}
-              count={followers.length}
+              filename={
+                followersName
+              }
+              count={
+                followers.length
+              }
               loading={
-                loadingKind === "followers"
+                loadingKind ===
+                "followers"
               }
               onClick={() =>
                 followersInput.current?.click()
               }
-              onFile={(file) =>
-                handleFile("followers", file)
+              onFile={(
+                file,
+              ) =>
+                handleFile(
+                  "followers",
+                  file,
+                )
               }
             />
 
             <UploadCard
               title="Takip ettiklerin"
               subtitle="following JSON dosyası"
-              filename={followingName}
-              count={following.length}
+              filename={
+                followingName
+              }
+              count={
+                following.length
+              }
               loading={
-                loadingKind === "following"
+                loadingKind ===
+                "following"
               }
               onClick={() =>
                 followingInput.current?.click()
               }
-              onFile={(file) =>
-                handleFile("following", file)
+              onFile={(
+                file,
+              ) =>
+                handleFile(
+                  "following",
+                  file,
+                )
               }
             />
           </div>
 
           <input
-            ref={followersInput}
+            ref={
+              followersInput
+            }
             className="hidden-input"
             type="file"
             accept=".json,application/json"
-            onChange={(event) =>
+            onChange={(
+              event,
+            ) =>
               handleFile(
                 "followers",
-                event.target.files?.[0],
+                event.target
+                  .files?.[0],
               )
             }
           />
 
           <input
-            ref={followingInput}
+            ref={
+              followingInput
+            }
             className="hidden-input"
             type="file"
             accept=".json,application/json"
-            onChange={(event) =>
+            onChange={(
+              event,
+            ) =>
               handleFile(
                 "following",
-                event.target.files?.[0],
+                event.target
+                  .files?.[0],
               )
             }
           />
@@ -645,18 +960,28 @@ function App() {
           <div className="summary-row">
             <StatCard
               label="Takipçi"
-              value={analysis.followers.length}
+              value={
+                analysis
+                  .followers
+                  .length
+              }
             />
 
             <StatCard
               label="Takip edilen"
-              value={analysis.following.length}
+              value={
+                analysis
+                  .following
+                  .length
+              }
             />
 
             <StatCard
               label="Geri takip etmeyen"
               value={
-                analysis.notFollowingBack.length
+                analysis
+                  .notFollowingBack
+                  .length
               }
               accent
             />
@@ -666,31 +991,58 @@ function App() {
             className="tabs"
             aria-label="Relationship filters"
           >
-            {tabConfig.map((item) => (
-              <button
-                type="button"
-                key={item.id}
-                className={
-                  tab === item.id
-                    ? "tab active"
-                    : "tab"
-                }
-                onClick={() => {
-                  setTab(item.id);
-                  setQuery("");
-                }}
-              >
-                <span>{item.short}</span>
-                <b>{counts[item.id]}</b>
-              </button>
-            ))}
+            {tabConfig.map(
+              (item) => (
+                <button
+                  type="button"
+                  key={
+                    item.id
+                  }
+                  className={
+                    tab ===
+                    item.id
+                      ? "tab active"
+                      : "tab"
+                  }
+                  onClick={() => {
+                    setTab(
+                      item.id,
+                    );
+
+                    setQuery(
+                      "",
+                    );
+                  }}
+                >
+                  <span>
+                    {
+                      item.short
+                    }
+                  </span>
+
+                  <b>
+                    {
+                      counts[
+                        item.id
+                      ]
+                    }
+                  </b>
+                </button>
+              ),
+            )}
           </nav>
 
           <div className="toolbar">
             <SearchBox
-              query={query}
-              onChange={setQuery}
-              onClear={() => setQuery("")}
+              query={
+                query
+              }
+              onChange={
+                setQuery
+              }
+              onClear={() =>
+                setQuery("")
+              }
             />
 
             <button
@@ -710,12 +1062,17 @@ function App() {
 
           <div className="list-head">
             <span>
-              {activePeople.length} hesap
+              {
+                activePeople.length
+              }{" "}
+              hesap
             </span>
 
             <button
               type="button"
-              onClick={clearFileAnalysis}
+              onClick={
+                clearFileAnalysis
+              }
             >
               Yeni analiz
             </button>
@@ -724,27 +1081,39 @@ function App() {
           <div className="people-list">
             {activePeople.length ? (
               activePeople.map(
-                (person, index) => (
+                (
+                  person,
+                  index,
+                ) => (
                   <article
                     className="person-row"
-                    key={person.username}
+                    key={
+                      person.username
+                    }
                   >
                     <div className="avatar">
                       {person.username
-                        .slice(0, 1)
+                        .slice(
+                          0,
+                          1,
+                        )
                         .toUpperCase()}
                     </div>
 
                     <div className="person-main">
                       <strong>
-                        @{person.username}
+                        @
+                        {
+                          person.username
+                        }
                       </strong>
 
                       <span>
                         {tab ===
                         "not-following-back"
                           ? "Seni geri takip etmiyor"
-                          : tab === "mutual"
+                          : tab ===
+                              "mutual"
                             ? "Karşılıklı takip"
                             : "Seni takip ediyor"}
                       </span>
@@ -752,8 +1121,12 @@ function App() {
 
                     <span className="row-index">
                       {String(
-                        index + 1,
-                      ).padStart(2, "0")}
+                        index +
+                          1,
+                      ).padStart(
+                        2,
+                        "0",
+                      )}
                     </span>
                   </article>
                 ),
@@ -771,7 +1144,7 @@ function App() {
 }
 
 function LiveDashboard({
-  result,
+  analysis,
   people,
   liveTab,
   query,
@@ -780,51 +1153,82 @@ function LiveDashboard({
   onClearQuery,
   onReset,
 }: {
-  result: LiveScanResult;
+  analysis: LiveRelationshipAnalysis;
   people: LiveInstagramUser[];
   liveTab: LiveTab;
   query: string;
-  onTabChange: (tab: LiveTab) => void;
-  onQueryChange: (value: string) => void;
+  onTabChange: (
+    tab: LiveTab,
+  ) => void;
+  onQueryChange: (
+    value: string,
+  ) => void;
   onClearQuery: () => void;
   onReset: () => void;
 }) {
-  const missingCount =
-    result.diagnostics.countDifference &&
-    result.diagnostics.countDifference > 0
-      ? result.diagnostics.countDifference
+  const missingFollowing =
+    analysis.following
+      .diagnostics
+      .countDifference &&
+    analysis.following
+      .diagnostics
+      .countDifference >
+      0
+      ? analysis.following
+          .diagnostics
+          .countDifference
       : 0;
 
   return (
     <section className="dashboard">
       <div className="summary-row">
         <StatCard
-          label="Takip edilen"
-          value={result.followingCount}
+          label="Takipçi"
+          value={
+            analysis.followerCount
+          }
         />
 
         <StatCard
-          label="Karşılıklı"
-          value={result.mutualCount}
+          label="Takip edilen"
+          value={
+            analysis.followingCount
+          }
         />
 
         <StatCard
           label="Geri takip etmeyen"
-          value={result.notFollowingBackCount}
+          value={
+            analysis
+              .notFollowingBack
+              .length
+          }
           accent
         />
       </div>
 
-      {missingCount > 0 && (
-        <div className="live-warning">
-          Instagram{" "}
-          {result.diagnostics.reportedCount ?? "?"}{" "}
-          hesap bildiriyor.{" "}
-          {result.followingCount} erişilebilir hesap
-          analiz edildi. {missingCount} hesap Instagram
-          tarafından listelenmedi.
-        </div>
-      )}
+      <div className="live-warning">
+        Analiz{" "}
+        {
+          analysis.followingCount
+        }{" "}
+        erişilebilir takip edilen ve{" "}
+        {
+          analysis.followerCount
+        }{" "}
+        erişilebilir takipçi üzerinden yapıldı.
+        {missingFollowing >
+          0 && (
+          <>
+            {" "}
+            Instagram takip edilen sayacında ayrıca{" "}
+            {
+              missingFollowing
+            }{" "}
+            hesap listelenmedi.
+          </>
+        )}
+      </div>
 
       <nav
         className="tabs live-tabs"
@@ -833,39 +1237,96 @@ function LiveDashboard({
         <button
           type="button"
           className={
-            liveTab === "not-following-back"
+            liveTab ===
+            "not-following-back"
               ? "tab active"
               : "tab"
           }
           onClick={() =>
-            onTabChange("not-following-back")
+            onTabChange(
+              "not-following-back",
+            )
           }
         >
-          <span>Unfollowers</span>
-          <b>{result.notFollowingBackCount}</b>
+          <span>
+            Geri Takip Yok
+          </span>
+
+          <b>
+            {
+              analysis
+                .notFollowingBack
+                .length
+            }
+          </b>
         </button>
 
         <button
           type="button"
           className={
-            liveTab === "mutual"
+            liveTab ===
+            "mutual"
               ? "tab active"
               : "tab"
           }
           onClick={() =>
-            onTabChange("mutual")
+            onTabChange(
+              "mutual",
+            )
           }
         >
-          <span>Mutual</span>
-          <b>{result.mutualCount}</b>
+          <span>
+            Karşılıklı
+          </span>
+
+          <b>
+            {
+              analysis
+                .mutual
+                .length
+            }
+          </b>
+        </button>
+
+        <button
+          type="button"
+          className={
+            liveTab ===
+            "fans"
+              ? "tab active"
+              : "tab"
+          }
+          onClick={() =>
+            onTabChange(
+              "fans",
+            )
+          }
+        >
+          <span>
+            Fans
+          </span>
+
+          <b>
+            {
+              analysis
+                .fans
+                .length
+            }
+          </b>
         </button>
       </nav>
 
       <div className="toolbar">
         <SearchBox
-          query={query}
-          onChange={onQueryChange}
-          onClear={onClearQuery}
+          query={
+            query
+          }
+          onChange={
+            onQueryChange
+          }
+          onClear={
+            onClearQuery
+          }
         />
 
         <button
@@ -884,11 +1345,15 @@ function LiveDashboard({
       </div>
 
       <div className="list-head">
-        <span>{people.length} hesap</span>
+        <span>
+          {people.length} hesap
+        </span>
 
         <button
           type="button"
-          onClick={onReset}
+          onClick={
+            onReset
+          }
         >
           Yeni analiz
         </button>
@@ -896,14 +1361,27 @@ function LiveDashboard({
 
       <div className="people-list">
         {people.length ? (
-          people.map((person, index) => (
-            <LivePersonRow
-              key={person.id}
-              person={person}
-              index={index}
-              liveTab={liveTab}
-            />
-          ))
+          people.map(
+            (
+              person,
+              index,
+            ) => (
+              <LivePersonRow
+                key={
+                  person.id
+                }
+                person={
+                  person
+                }
+                index={
+                  index
+                }
+                liveTab={
+                  liveTab
+                }
+              />
+            ),
+          )
         ) : (
           <EmptyState />
         )}
@@ -914,12 +1392,6 @@ function LiveDashboard({
   );
 }
 
-function normalizeProfilePicUrl(url: string) {
-  return url
-    .trim()
-    .replace(/&amp;/g, "&");
-}
-
 function AvatarImage({
   url,
   username,
@@ -927,7 +1399,10 @@ function AvatarImage({
   url: string;
   username: string;
 }) {
-  const [blobUrl, setBlobUrl] = useState("");
+  const [
+    blobUrl,
+    setBlobUrl,
+  ] = useState("");
 
   useEffect(() => {
     if (!url) {
@@ -940,14 +1415,25 @@ function AvatarImage({
 
     async function loadAvatar() {
       try {
-        const cleanUrl = url
-          .trim()
-          .replace(/&amp;/g, "&");
+        const cleanUrl =
+          url
+            .trim()
+            .replace(
+              /&amp;/g,
+              "&",
+            );
 
-        const response = await fetch(cleanUrl, {
-          credentials: "omit",
-          cache: "force-cache",
-        });
+        const response =
+          await fetch(
+            cleanUrl,
+            {
+              credentials:
+                "omit",
+
+              cache:
+                "force-cache",
+            },
+          );
 
         if (!response.ok) {
           throw new Error(
@@ -955,16 +1441,21 @@ function AvatarImage({
           );
         }
 
-        const blob = await response.blob();
+        const blob =
+          await response.blob();
 
         if (cancelled) {
           return;
         }
 
         objectUrl =
-          URL.createObjectURL(blob);
+          URL.createObjectURL(
+            blob,
+          );
 
-        setBlobUrl(objectUrl);
+        setBlobUrl(
+          objectUrl,
+        );
       } catch (error) {
         console.warn(
           "[Follower Lens] Avatar fetch failed:",
@@ -984,10 +1475,15 @@ function AvatarImage({
       cancelled = true;
 
       if (objectUrl) {
-        URL.revokeObjectURL(objectUrl);
+        URL.revokeObjectURL(
+          objectUrl,
+        );
       }
     };
-  }, [url, username]);
+  }, [
+    url,
+    username,
+  ]);
 
   if (!blobUrl) {
     return null;
@@ -1022,8 +1518,12 @@ function LivePersonRow({
 
         {person.profilePicUrl && (
           <AvatarImage
-            url={person.profilePicUrl}
-            username={person.username}
+            url={
+              person.profilePicUrl
+            }
+            username={
+              person.username
+            }
           />
         )}
       </div>
@@ -1035,9 +1535,13 @@ function LivePersonRow({
 
         <span>
           {person.fullName ||
-            (liveTab === "not-following-back"
+            (liveTab ===
+            "not-following-back"
               ? "Seni geri takip etmiyor"
-              : "Karşılıklı takip")}
+              : liveTab ===
+                  "mutual"
+                ? "Karşılıklı takip"
+                : "Seni takip ediyor")}
         </span>
       </div>
 
@@ -1054,7 +1558,12 @@ function LivePersonRow({
       </a>
 
       <span className="row-index live-row-index">
-        {String(index + 1).padStart(2, "0")}
+        {String(
+          index + 1,
+        ).padStart(
+          2,
+          "0",
+        )}
       </span>
     </article>
   );
@@ -1066,7 +1575,9 @@ function SearchBox({
   onClear,
 }: {
   query: string;
-  onChange: (value: string) => void;
+  onChange: (
+    value: string,
+  ) => void;
   onClear: () => void;
 }) {
   return (
@@ -1074,9 +1585,16 @@ function SearchBox({
       <Icon name="search" />
 
       <input
-        value={query}
-        onChange={(event) =>
-          onChange(event.target.value)
+        value={
+          query
+        }
+        onChange={(
+          event,
+        ) =>
+          onChange(
+            event.target
+              .value,
+          )
         }
         placeholder="Kullanıcı adı ara..."
       />
@@ -1084,7 +1602,9 @@ function SearchBox({
       {query && (
         <button
           type="button"
-          onClick={onClear}
+          onClick={
+            onClear
+          }
           aria-label="Aramayı temizle"
         >
           <Icon name="close" />
@@ -1104,8 +1624,7 @@ function EmptyState() {
       </strong>
 
       <span>
-        Arama veya seçili kategoride sonuç
-        bulunamadı.
+        Arama veya seçili kategoride sonuç bulunamadı.
       </span>
     </div>
   );
@@ -1117,8 +1636,7 @@ function Footer() {
       <span className="status-dot" />
 
       <span>
-        Analiz sadece bu oturumda bellekte
-        tutuluyor.
+        Analiz sadece bu oturumda bellekte tutuluyor.
       </span>
     </footer>
   );
@@ -1139,26 +1657,39 @@ function UploadCard({
   count: number;
   loading: boolean;
   onClick: () => void;
-  onFile: (file: File) => void;
+  onFile: (
+    file: File,
+  ) => void;
 }) {
   return (
     <button
       type="button"
       className={`upload-card ${
-        filename ? "loaded" : ""
+        filename
+          ? "loaded"
+          : ""
       }`}
-      onClick={onClick}
-      onDragOver={(event) =>
+      onClick={
+        onClick
+      }
+      onDragOver={(
+        event,
+      ) =>
         event.preventDefault()
       }
-      onDrop={(event) => {
+      onDrop={(
+        event,
+      ) => {
         event.preventDefault();
 
         const file =
-          event.dataTransfer.files[0];
+          event.dataTransfer
+            .files[0];
 
         if (file) {
-          onFile(file);
+          onFile(
+            file,
+          );
         }
       }}
     >
@@ -1167,20 +1698,27 @@ function UploadCard({
       </div>
 
       <div className="upload-copy">
-        <strong>{title}</strong>
+        <strong>
+          {title}
+        </strong>
 
         <span>
           {loading
             ? "Okunuyor..."
-            : filename || subtitle}
+            : filename ||
+              subtitle}
         </span>
       </div>
 
       <div className="upload-meta">
         {filename ? (
-          <b>{count}</b>
+          <b>
+            {count}
+          </b>
         ) : (
-          <span>JSON</span>
+          <span>
+            JSON
+          </span>
         )}
       </div>
     </button>
@@ -1199,13 +1737,19 @@ function StatCard({
   return (
     <div
       className={`stat-card ${
-        accent ? "accent" : ""
+        accent
+          ? "accent"
+          : ""
       }`}
     >
-      <span>{label}</span>
+      <span>
+        {label}
+      </span>
 
       <strong>
-        {value.toLocaleString("tr-TR")}
+        {value.toLocaleString(
+          "tr-TR",
+        )}
       </strong>
     </div>
   );

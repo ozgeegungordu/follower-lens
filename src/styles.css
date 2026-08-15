@@ -665,7 +665,13 @@ button {
 }
 
 .live-tabs {
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.live-tabs .tab {
+  font-size: 8.5px;
+  padding-left: 5px;
+  padding-right: 5px;
 }
 
 .live-warning {
