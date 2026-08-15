@@ -2,10 +2,14 @@
   "manifest_version": 3,
   "name": "Follower Lens",
   "description": "Privacy-first follower relationship analyzer.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "permissions": [
     "activeTab",
     "scripting"
+  ],
+  "host_permissions": [
+    "https://*.fbcdn.net/*",
+    "https://*.cdninstagram.com/*"
   ],
   "action": {
     "default_title": "Follower Lens",

@@ -1,40 +1,48 @@
-import { useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   analyzeRelationships,
   parseInstagramFile,
 } from "./lib/instagramExport";
 import { downloadUsernames } from "./lib/export";
+import { scanInstagramFollowing } from "./live/instagramScanner";
 import type { InstagramPerson, RelationshipTab } from "./types";
+import type {
+  LiveInstagramUser,
+  LiveScanResult,
+} from "./live/instagramTypes";
 
 declare const chrome: any;
 
 type LiveStatus =
   | "idle"
   | "checking"
+  | "scanning"
   | "ready"
   | "wrong-tab"
   | "error";
 
 type FileKind = "followers" | "following";
+type LiveTab = "not-following-back" | "mutual";
 
 const tabConfig: Array<{
   id: RelationshipTab;
-  label: string;
   short: string;
 }> = [
   {
     id: "not-following-back",
-    label: "Geri takip etmeyen",
     short: "Unfollowers",
   },
   {
     id: "mutual",
-    label: "Karşılıklı",
     short: "Mutual",
   },
   {
     id: "fans",
-    label: "Senin takip etmediklerin",
     short: "Fans",
   },
 ];
@@ -118,12 +126,14 @@ function Icon({
 function App() {
   const [followers, setFollowers] = useState<InstagramPerson[]>([]);
   const [following, setFollowing] = useState<InstagramPerson[]>([]);
-
   const [followersName, setFollowersName] = useState("");
   const [followingName, setFollowingName] = useState("");
 
   const [tab, setTab] =
     useState<RelationshipTab>("not-following-back");
+
+  const [liveTab, setLiveTab] =
+    useState<LiveTab>("not-following-back");
 
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
@@ -136,6 +146,9 @@ function App() {
 
   const [liveMessage, setLiveMessage] = useState("");
 
+  const [liveResult, setLiveResult] =
+    useState<LiveScanResult | null>(null);
+
   const followersInput = useRef<HTMLInputElement>(null);
   const followingInput = useRef<HTMLInputElement>(null);
 
@@ -144,7 +157,7 @@ function App() {
     [followers, following],
   );
 
-  const ready =
+  const fileReady =
     followers.length > 0 && following.length > 0;
 
   const activePeople = useMemo(() => {
@@ -166,9 +179,51 @@ function App() {
     );
   }, [analysis, query, tab]);
 
+  const liveNotFollowingBack = useMemo(
+    () =>
+      liveResult?.users.filter(
+        (user) => user.followsViewer === false,
+      ) ?? [],
+    [liveResult],
+  );
+
+  const liveMutual = useMemo(
+    () =>
+      liveResult?.users.filter(
+        (user) => user.followsViewer === true,
+      ) ?? [],
+    [liveResult],
+  );
+
+  const livePeople = useMemo(() => {
+    const source =
+      liveTab === "not-following-back"
+        ? liveNotFollowingBack
+        : liveMutual;
+
+    const needle = query.trim().toLowerCase();
+
+    if (!needle) {
+      return source;
+    }
+
+    return source.filter((person) => {
+      const text =
+        `${person.username} ${person.fullName}`.toLowerCase();
+
+      return text.includes(needle);
+    });
+  }, [
+    liveTab,
+    liveMutual,
+    liveNotFollowingBack,
+    query,
+  ]);
+
   async function checkInstagramConnection() {
     setLiveStatus("checking");
     setLiveMessage("");
+    setLiveResult(null);
 
     try {
       if (
@@ -177,11 +232,9 @@ function App() {
         !chrome.scripting
       ) {
         setLiveStatus("error");
-
         setLiveMessage(
           "Live Mode localhost'ta çalışmaz. Follower Lens'i Chrome uzantısından aç.",
         );
-
         return;
       }
 
@@ -199,7 +252,6 @@ function App() {
           target: {
             tabId: activeTab.id,
           },
-
           func: () => {
             return {
               hostname: window.location.hostname,
@@ -217,16 +269,13 @@ function App() {
 
       if (!isInstagram) {
         setLiveStatus("wrong-tab");
-
         setLiveMessage(
           "Instagram sekmesi açık değil. instagram.com'u açıp Follower Lens'i tekrar çalıştır.",
         );
-
         return;
       }
 
       setLiveStatus("ready");
-
       setLiveMessage(
         `Instagram bağlantısı hazır • ${page.hostname}`,
       );
@@ -242,6 +291,57 @@ function App() {
         err instanceof Error
           ? err.message
           : "Instagram sekmesine bağlanılamadı.",
+      );
+    }
+  }
+
+  async function handleLiveScan() {
+    setLiveStatus("scanning");
+    setLiveMessage(
+      "Takip ettiklerin taranıyor. Bu işlem hesap büyüklüğüne göre biraz sürebilir.",
+    );
+    setLiveResult(null);
+    setQuery("");
+    setLiveTab("not-following-back");
+
+    try {
+      const result =
+        await scanInstagramFollowing();
+
+      setLiveResult(result);
+
+      console.log(
+        "[Follower Lens] diagnostics:",
+        result.diagnostics,
+      );
+
+      setLiveStatus("ready");
+
+      if (result.diagnostics.isComplete) {
+        setLiveMessage(
+          `Tarama tamamlandı • ${result.followingCount} hesap incelendi`,
+        );
+      } else {
+        setLiveMessage(
+          `Instagram ${
+            result.diagnostics.reportedCount ?? "?"
+          } hesap bildiriyor • ${
+            result.followingCount
+          } erişilebilir hesap analiz edildi`,
+        );
+      }
+    } catch (err) {
+      console.error(
+        "[Follower Lens] Live scan failed:",
+        err,
+      );
+
+      setLiveStatus("error");
+
+      setLiveMessage(
+        err instanceof Error
+          ? err.message
+          : "Instagram taraması başarısız oldu.",
       );
     }
   }
@@ -279,26 +379,28 @@ function App() {
     }
   }
 
-  function clearAll() {
+  function clearFileAnalysis() {
     setFollowers([]);
     setFollowing([]);
-
     setFollowersName("");
     setFollowingName("");
-
     setQuery("");
     setError("");
+  }
+
+  function clearLiveAnalysis() {
+    setLiveResult(null);
+    setLiveStatus("idle");
+    setLiveMessage("");
+    setLiveTab("not-following-back");
+    setQuery("");
   }
 
   const counts = {
     "not-following-back":
       analysis.notFollowingBack.length,
-
-    mutual:
-      analysis.mutual.length,
-
-    fans:
-      analysis.fans.length,
+    mutual: analysis.mutual.length,
+    fans: analysis.fans.length,
   };
 
   return (
@@ -326,14 +428,26 @@ function App() {
         </div>
       </header>
 
-      {!ready ? (
+      {liveResult ? (
+        <LiveDashboard
+          result={liveResult}
+          people={livePeople}
+          liveTab={liveTab}
+          query={query}
+          onTabChange={(nextTab) => {
+            setLiveTab(nextTab);
+            setQuery("");
+          }}
+          onQueryChange={setQuery}
+          onClearQuery={() => setQuery("")}
+          onReset={clearLiveAnalysis}
+        />
+      ) : !fileReady ? (
         <section className="onboarding">
           <div className="hero">
             <div className="eyebrow">
               <Icon name="sparkle" />
-              <span>
-                PRIVATE • LOCAL • FAST
-              </span>
+              <span>PRIVATE • LOCAL • FAST</span>
             </div>
 
             <h1>
@@ -344,22 +458,26 @@ function App() {
             <p>
               Instagram hesabını doğrudan
               Follower Lens ile analiz et.
-              JSON yöntemi şimdilik alternatif
-              olarak aşağıda duruyor.
+              JSON yöntemi alternatif olarak
+              aşağıda duruyor.
             </p>
           </div>
 
           <button
+            type="button"
             className={`upload-card ${
               liveStatus === "ready"
                 ? "loaded"
                 : ""
             }`}
             onClick={
-              checkInstagramConnection
+              liveStatus === "ready"
+                ? handleLiveScan
+                : checkInstagramConnection
             }
             disabled={
-              liveStatus === "checking"
+              liveStatus === "checking" ||
+              liveStatus === "scanning"
             }
           >
             <div className="upload-icon">
@@ -370,21 +488,27 @@ function App() {
               <strong>
                 {liveStatus === "checking"
                   ? "Instagram kontrol ediliyor..."
-                  : liveStatus === "ready"
-                    ? "Instagram hazır"
-                    : "Instagram'ı bağla"}
+                  : liveStatus === "scanning"
+                    ? "Hesabın taranıyor..."
+                    : liveStatus === "ready"
+                      ? "Hesabımı analiz et"
+                      : "Instagram'ı bağla"}
               </strong>
 
               <span>
-                {liveStatus === "ready"
-                  ? "Live Mode kullanılabilir"
-                  : "instagram.com açıkken buraya tıkla"}
+                {liveStatus === "scanning"
+                  ? "Takip ettiklerin kontrol ediliyor..."
+                  : liveStatus === "ready"
+                    ? "Live scanner'ı başlat"
+                    : "instagram.com açıkken buraya tıkla"}
               </span>
             </div>
 
             <div className="upload-meta">
               {liveStatus === "ready" ? (
                 <b>✓</b>
+              ) : liveStatus === "scanning" ? (
+                <span>...</span>
               ) : (
                 <span>LIVE</span>
               )}
@@ -392,7 +516,8 @@ function App() {
           </button>
 
           {liveMessage &&
-            liveStatus === "ready" && (
+            (liveStatus === "ready" ||
+              liveStatus === "scanning") && (
               <div className="privacy-card">
                 <div className="privacy-icon">
                   <Icon name="shield" />
@@ -400,8 +525,9 @@ function App() {
 
                 <div>
                   <strong>
-                    Instagram bağlantısı
-                    kuruldu.
+                    {liveStatus === "scanning"
+                      ? "Instagram taranıyor."
+                      : "Instagram bağlantısı kuruldu."}
                   </strong>
 
                   <p>{liveMessage}</p>
@@ -519,23 +645,18 @@ function App() {
           <div className="summary-row">
             <StatCard
               label="Takipçi"
-              value={
-                analysis.followers.length
-              }
+              value={analysis.followers.length}
             />
 
             <StatCard
               label="Takip edilen"
-              value={
-                analysis.following.length
-              }
+              value={analysis.following.length}
             />
 
             <StatCard
               label="Geri takip etmeyen"
               value={
-                analysis.notFollowingBack
-                  .length
+                analysis.notFollowingBack.length
               }
               accent
             />
@@ -547,15 +668,17 @@ function App() {
           >
             {tabConfig.map((item) => (
               <button
+                type="button"
                 key={item.id}
                 className={
                   tab === item.id
                     ? "tab active"
                     : "tab"
                 }
-                onClick={() =>
-                  setTab(item.id)
-                }
+                onClick={() => {
+                  setTab(item.id);
+                  setQuery("");
+                }}
               >
                 <span>{item.short}</span>
                 <b>{counts[item.id]}</b>
@@ -564,31 +687,11 @@ function App() {
           </nav>
 
           <div className="toolbar">
-            <label className="searchbox">
-              <Icon name="search" />
-
-              <input
-                value={query}
-                onChange={(event) =>
-                  setQuery(
-                    event.target.value,
-                  )
-                }
-                placeholder="Kullanıcı adı ara..."
-              />
-
-              {query && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    setQuery("")
-                  }
-                  aria-label="Aramayı temizle"
-                >
-                  <Icon name="close" />
-                </button>
-              )}
-            </label>
+            <SearchBox
+              query={query}
+              onChange={setQuery}
+              onClear={() => setQuery("")}
+            />
 
             <button
               type="button"
@@ -612,7 +715,7 @@ function App() {
 
             <button
               type="button"
-              onClick={clearAll}
+              onClick={clearFileAnalysis}
             >
               Yeni analiz
             </button>
@@ -656,32 +759,368 @@ function App() {
                 ),
               )
             ) : (
-              <div className="empty-state">
-                <Icon name="sparkle" />
-
-                <strong>
-                  Burada kimse yok.
-                </strong>
-
-                <span>
-                  Arama veya seçili
-                  kategoride sonuç
-                  bulunamadı.
-                </span>
-              </div>
+              <EmptyState />
             )}
           </div>
 
-          <footer className="footer">
-            <span className="status-dot" />
-            <span>
-              Analiz sadece bu oturumda
-              bellekte tutuluyor.
-            </span>
-          </footer>
+          <Footer />
         </section>
       )}
     </main>
+  );
+}
+
+function LiveDashboard({
+  result,
+  people,
+  liveTab,
+  query,
+  onTabChange,
+  onQueryChange,
+  onClearQuery,
+  onReset,
+}: {
+  result: LiveScanResult;
+  people: LiveInstagramUser[];
+  liveTab: LiveTab;
+  query: string;
+  onTabChange: (tab: LiveTab) => void;
+  onQueryChange: (value: string) => void;
+  onClearQuery: () => void;
+  onReset: () => void;
+}) {
+  const missingCount =
+    result.diagnostics.countDifference &&
+    result.diagnostics.countDifference > 0
+      ? result.diagnostics.countDifference
+      : 0;
+
+  return (
+    <section className="dashboard">
+      <div className="summary-row">
+        <StatCard
+          label="Takip edilen"
+          value={result.followingCount}
+        />
+
+        <StatCard
+          label="Karşılıklı"
+          value={result.mutualCount}
+        />
+
+        <StatCard
+          label="Geri takip etmeyen"
+          value={result.notFollowingBackCount}
+          accent
+        />
+      </div>
+
+      {missingCount > 0 && (
+        <div className="live-warning">
+          Instagram{" "}
+          {result.diagnostics.reportedCount ?? "?"}{" "}
+          hesap bildiriyor.{" "}
+          {result.followingCount} erişilebilir hesap
+          analiz edildi. {missingCount} hesap Instagram
+          tarafından listelenmedi.
+        </div>
+      )}
+
+      <nav
+        className="tabs live-tabs"
+        aria-label="Live relationship filters"
+      >
+        <button
+          type="button"
+          className={
+            liveTab === "not-following-back"
+              ? "tab active"
+              : "tab"
+          }
+          onClick={() =>
+            onTabChange("not-following-back")
+          }
+        >
+          <span>Unfollowers</span>
+          <b>{result.notFollowingBackCount}</b>
+        </button>
+
+        <button
+          type="button"
+          className={
+            liveTab === "mutual"
+              ? "tab active"
+              : "tab"
+          }
+          onClick={() =>
+            onTabChange("mutual")
+          }
+        >
+          <span>Mutual</span>
+          <b>{result.mutualCount}</b>
+        </button>
+      </nav>
+
+      <div className="toolbar">
+        <SearchBox
+          query={query}
+          onChange={onQueryChange}
+          onClear={onClearQuery}
+        />
+
+        <button
+          type="button"
+          className="icon-action"
+          title="Listeyi TXT olarak indir"
+          onClick={() =>
+            downloadUsernames(
+              people,
+              `follower-lens-live-${liveTab}.txt`,
+            )
+          }
+        >
+          <Icon name="download" />
+        </button>
+      </div>
+
+      <div className="list-head">
+        <span>{people.length} hesap</span>
+
+        <button
+          type="button"
+          onClick={onReset}
+        >
+          Yeni analiz
+        </button>
+      </div>
+
+      <div className="people-list">
+        {people.length ? (
+          people.map((person, index) => (
+            <LivePersonRow
+              key={person.id}
+              person={person}
+              index={index}
+              liveTab={liveTab}
+            />
+          ))
+        ) : (
+          <EmptyState />
+        )}
+      </div>
+
+      <Footer />
+    </section>
+  );
+}
+
+function normalizeProfilePicUrl(url: string) {
+  return url
+    .trim()
+    .replace(/&amp;/g, "&");
+}
+
+function AvatarImage({
+  url,
+  username,
+}: {
+  url: string;
+  username: string;
+}) {
+  const [blobUrl, setBlobUrl] = useState("");
+
+  useEffect(() => {
+    if (!url) {
+      setBlobUrl("");
+      return;
+    }
+
+    let cancelled = false;
+    let objectUrl = "";
+
+    async function loadAvatar() {
+      try {
+        const cleanUrl = url
+          .trim()
+          .replace(/&amp;/g, "&");
+
+        const response = await fetch(cleanUrl, {
+          credentials: "omit",
+          cache: "force-cache",
+        });
+
+        if (!response.ok) {
+          throw new Error(
+            `Avatar HTTP ${response.status}`,
+          );
+        }
+
+        const blob = await response.blob();
+
+        if (cancelled) {
+          return;
+        }
+
+        objectUrl =
+          URL.createObjectURL(blob);
+
+        setBlobUrl(objectUrl);
+      } catch (error) {
+        console.warn(
+          "[Follower Lens] Avatar fetch failed:",
+          username,
+          error,
+        );
+
+        if (!cancelled) {
+          setBlobUrl("");
+        }
+      }
+    }
+
+    loadAvatar();
+
+    return () => {
+      cancelled = true;
+
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [url, username]);
+
+  if (!blobUrl) {
+    return null;
+  }
+
+  return (
+    <img
+      src={blobUrl}
+      alt=""
+      loading="lazy"
+    />
+  );
+}
+
+function LivePersonRow({
+  person,
+  index,
+  liveTab,
+}: {
+  person: LiveInstagramUser;
+  index: number;
+  liveTab: LiveTab;
+}) {
+  return (
+    <article className="person-row">
+      <div className="avatar live-avatar">
+        <span>
+          {person.username
+            .slice(0, 1)
+            .toUpperCase()}
+        </span>
+
+        {person.profilePicUrl && (
+          <AvatarImage
+            url={person.profilePicUrl}
+            username={person.username}
+          />
+        )}
+      </div>
+
+      <div className="person-main">
+        <strong>
+          @{person.username}
+        </strong>
+
+        <span>
+          {person.fullName ||
+            (liveTab === "not-following-back"
+              ? "Seni geri takip etmiyor"
+              : "Karşılıklı takip")}
+        </span>
+      </div>
+
+      <a
+        className="profile-link"
+        href={`https://www.instagram.com/${encodeURIComponent(
+          person.username,
+        )}/`}
+        target="_blank"
+        rel="noreferrer"
+        title={`@${person.username} profilini aç`}
+      >
+        Aç ↗
+      </a>
+
+      <span className="row-index live-row-index">
+        {String(index + 1).padStart(2, "0")}
+      </span>
+    </article>
+  );
+}
+
+function SearchBox({
+  query,
+  onChange,
+  onClear,
+}: {
+  query: string;
+  onChange: (value: string) => void;
+  onClear: () => void;
+}) {
+  return (
+    <label className="searchbox">
+      <Icon name="search" />
+
+      <input
+        value={query}
+        onChange={(event) =>
+          onChange(event.target.value)
+        }
+        placeholder="Kullanıcı adı ara..."
+      />
+
+      {query && (
+        <button
+          type="button"
+          onClick={onClear}
+          aria-label="Aramayı temizle"
+        >
+          <Icon name="close" />
+        </button>
+      )}
+    </label>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div className="empty-state">
+      <Icon name="sparkle" />
+
+      <strong>
+        Burada kimse yok.
+      </strong>
+
+      <span>
+        Arama veya seçili kategoride sonuç
+        bulunamadı.
+      </span>
+    </div>
+  );
+}
+
+function Footer() {
+  return (
+    <footer className="footer">
+      <span className="status-dot" />
+
+      <span>
+        Analiz sadece bu oturumda bellekte
+        tutuluyor.
+      </span>
+    </footer>
   );
 }
 
