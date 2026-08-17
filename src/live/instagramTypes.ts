@@ -57,3 +57,13 @@ export interface LiveFollowersScanResult {
   users: LiveInstagramUser[];
   diagnostics: LiveFollowersScanDiagnostics;
 }
+
+export const DEFAULT_LIVE_SCAN_CONFIG: LiveScanConfig = {
+  pageSize: 50,
+  delayMinMs: 500,
+  delayMaxMs: 900,
+  pauseEveryPages: 10,
+  pauseMs: 3000,
+  maxRetries: 3,
+  maxPages: 250,
+};
